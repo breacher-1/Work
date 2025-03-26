@@ -1,0 +1,99 @@
+-- Drop and create the cs_upsell_table
+DROP TABLE IF EXISTS cs_upsell_table;
+CREATE TEMP TABLE cs_upsell_table (
+    s_no INT PRIMARY KEY,
+    recommendation_assured_code VARCHAR(255),
+    recommendation_type VARCHAR(255),
+    recommendation_department_name VARCHAR(255),
+    recommendation_lob VARCHAR(255)
+);
+
+-- Drop and create the cs_crosssell_table
+DROP TABLE IF EXISTS cs_crosssell_table;
+CREATE TEMP TABLE cs_crosssell_table (
+    s_no INT PRIMARY KEY,
+    recommendation_assured_code VARCHAR(255),
+    recommendation_type VARCHAR(255),
+    recommendation_department_name VARCHAR(255),
+    recommendation_lob VARCHAR(255)
+);
+
+-- Drop and create the penultimate tables
+DROP TABLE IF EXISTS penultimate_assured_code;
+CREATE TABLE penultimate_assured_code (
+    s_no INT PRIMARY KEY,
+    assured_code VARCHAR(255)
+);
+
+DROP TABLE IF EXISTS penultimate_department_name;
+CREATE TABLE penultimate_department_name (
+    s_no INT PRIMARY KEY,
+    product_department_name VARCHAR(255)
+);
+
+DROP TABLE IF EXISTS penultimate_lob_name;
+CREATE TABLE penultimate_lob_name (
+    s_no INT PRIMARY KEY,
+    lob VARCHAR(255)
+);
+
+-- Insert data into penultimate tables with consistent s_no values
+WITH CommonData AS (
+    SELECT
+        ROW_NUMBER() OVER (ORDER BY id) AS s_no,
+        assured_code,
+        product_department_name,
+        lob
+    FROM public.submission_datamart
+    WHERE policy_status IN ('Policy Bound', 'Cancelled') AND policy_source = 'DRAGON'
+    LIMIT 5000
+)
+INSERT INTO penultimate_assured_code (s_no, assured_code)
+SELECT s_no, assured_code FROM CommonData;
+
+INSERT INTO penultimate_department_name (s_no, product_department_name)
+SELECT s_no, product_department_name FROM CommonData;
+
+INSERT INTO penultimate_lob_name (s_no, lob)
+SELECT s_no, lob FROM CommonData;
+
+-- Insert data into cs_upsell_table
+INSERT INTO cs_upsell_table (s_no, recommendation_assured_code, recommendation_type, recommendation_department_name, recommendation_lob)
+SELECT
+    s_no,
+    assured_code,
+    'Upsell',
+    product_department_name,
+    lob
+FROM penultimate_assured_code
+JOIN penultimate_department_name USING (s_no)
+JOIN penultimate_lob_name USING (s_no);
+
+-- Insert data into cs_crosssell_table
+INSERT INTO cs_crosssell_table (s_no, recommendation_assured_code, recommendation_type, recommendation_department_name, recommendation_lob)
+SELECT
+    s_no,
+    assured_code,
+    'Crosssell',
+    product_department_name,
+    lob
+FROM penultimate_assured_code
+JOIN penultimate_department_name USING (s_no)
+JOIN penultimate_lob_name USING (s_no);
+
+-- Create the final table by combining cs_upsell_table and cs_crosssell_table
+DROP TABLE IF EXISTS final;
+CREATE TABLE final AS 
+SELECT * FROM cs_upsell_table
+UNION ALL
+SELECT * FROM cs_crosssell_table;
+
+-- Verify the results
+SELECT * FROM cs_upsell_table ORDER BY s_no;
+SELECT * FROM cs_crosssell_table ORDER BY s_no;
+SELECT * FROM final ORDER BY s_no;
+
+-- Count the number of rows in each table
+SELECT COUNT(*) FROM cs_upsell_table;
+SELECT COUNT(*) FROM cs_crosssell_table;
+SELECT COUNT(*) FROM final;
